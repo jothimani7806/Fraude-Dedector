@@ -3,8 +3,10 @@ import pandas as pd
 import numpy as np
 import pickle
 import datetime
+import zipfile
+import os
 from xgboost import XGBClassifier
-import streamlit as st
+
 # --- PAGE CONFIGURATION ---
 st.set_page_config(
     page_title="FraudGuard | AI Transaction Monitor",
@@ -45,23 +47,19 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # --- LOAD MODEL ---
-import zipfile
-import os
-from xgboost import XGBClassifier
-import streamlit as st
-
 @st.cache_resource
 def load_model():
-
     # Extract the model if it doesn't already exist
     if not os.path.exists("xgboost_fraud_model.json"):
-        with zipfile.ZipFile("xgboost_fraud_model.zip", "r") as zip_ref:
-            zip_ref.extractall(".")
+        if os.path.exists("xgboost_fraud_model.zip"):
+            with zipfile.ZipFile("xgboost_fraud_model.zip", "r") as zip_ref:
+                zip_ref.extractall(".")
+        else:
+            return None
 
     # Load the model
     model = XGBClassifier()
     model.load_model("xgboost_fraud_model.json")
-
     return model
 
 model = load_model()
@@ -71,9 +69,7 @@ st.title("🛡️ FraudGuard | Transaction Analysis System")
 st.markdown("Enter transaction details below to run our AI-powered real-time fraud detection engine.")
 st.markdown("---")
 
-# --- MOCK ENCODERS (Update with your actual LabelEncoders) ---
-# Because the notebook didn't save the LabelEncoders, we use mock dictionaries here.
-# For a production app, load your saved .pkl encoders and use `encoder.transform()`.
+# --- MOCK ENCODERS ---
 GENDER_MAP = {"Male": 0, "Female": 1}
 CATEGORY_MAP = {"Grocery": 0, "Entertainment": 1, "Healthcare": 2, "Gas/Transport": 3, "Online Retail": 4}
 JOB_MAP = {"Engineer": 0, "Teacher": 1, "Doctor": 2, "Sales": 3, "Other": 4}
@@ -95,11 +91,9 @@ with st.sidebar.form("transaction_form"):
     merchant = st.selectbox("Merchant", options=list(MERCHANT_MAP.keys()))
     
     st.subheader("Time & Location")
-    # Date and time inputs to extract hour, day, month naturally
     trans_date = st.date_input("Transaction Date", datetime.date(2026, 7, 4))
     trans_time = st.time_input("Transaction Time", datetime.time(12, 30))
     
-    # Location coordinates
     col_lat, col_long = st.columns(2)
     lat = col_lat.number_input("Cust Latitude", value=40.7128, format="%.4f")
     long = col_long.number_input("Cust Longitude", value=-74.0060, format="%.4f")
@@ -108,18 +102,19 @@ with st.sidebar.form("transaction_form"):
     merch_lat = col_mlat.number_input("Merch Latitude", value=40.7306, format="%.4f")
     merch_long = col_mlong.number_input("Merch Longitude", value=-73.9866, format="%.4f")
 
-    # Generate Unix timestamp dynamically
-    dt_combined = datetime.datetime.combine(trans_date, trans_time)
-    unix_time = int(dt_combined.timestamp())
-
+    # The submit button terminates the form parsing lifecycle scope cleanly
     submit_button = st.form_submit_button(label="🔍 Analyze Transaction")
 
 # --- MAIN DASHBOARD AREA ---
 if submit_button:
     if model is None:
-        st.error("Cannot run analysis without the model.")
+        st.error("Cannot run analysis. Missing model configuration architecture files.")
     else:
-        # 1. Prepare data matching exact column order from the Jupyter Notebook
+        # FIXED: Feature construction & timestamp conversion moved here to calculate fresh values on click
+        dt_combined = datetime.datetime.combine(trans_date, trans_time)
+        unix_time = int(dt_combined.timestamp())
+
+        # Prepare data matching exact column order from the Jupyter Notebook
         input_data = pd.DataFrame([[
             MERCHANT_MAP[merchant],
             CATEGORY_MAP[category],
@@ -141,11 +136,11 @@ if submit_button:
             'job', 'unix_time', 'merch_lat', 'merch_long', 'hour', 'day', 'month', 'age'
         ])
         
-        # 2. Make Prediction
+        # Make Prediction using current parameters
         prediction = model.predict(input_data)[0]
-        probability = model.predict_proba(input_data)[0][1] # Probability of fraud (Class 1)
+        probability = model.predict_proba(input_data)[0][1] 
         
-        # 3. Display Results
+        # Display Results
         col1, col2 = st.columns([2, 1])
         
         with col1:
@@ -160,16 +155,14 @@ if submit_button:
             
         with col2:
             st.subheader("Risk Analysis")
-            risk_color = "red" if prediction == 1 else "green"
-            
-            # Display metrics
-            st.metric("Fraud Probability", f"{probability * 100:.2f}%", 
-                      delta="High Risk" if prediction == 1 else "Low Risk", 
-                      delta_color="inverse")
-            
+            st.metric(
+                label="Fraud Probability", 
+                value=f"{probability * 100:.2f}%", 
+                delta="High Risk" if prediction == 1 else "Low Risk", 
+                delta_color="inverse"
+            )
             st.progress(float(probability))
             
-        # Optional: Display the raw feature vector for transparency/debugging
         with st.expander("View Raw Feature Vector"):
             st.dataframe(input_data)
 else:
