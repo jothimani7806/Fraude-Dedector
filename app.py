@@ -45,17 +45,24 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # --- LOAD MODEL ---
+import zipfile
+import os
+from xgboost import XGBClassifier
+import streamlit as st
+
 @st.cache_resource
 def load_model():
-    try:
-        # 1. Initialize an empty XGBoost model
-        model = XGBClassifier()
-        # 2. Load the weights from the JSON file
-        model.load_model("xgboost_fraud_model.json")
-        return model
-    except Exception as e:
-        st.error(f"⚠️ Error loading model: {e}")
-        return None
+
+    # Extract the model if it doesn't already exist
+    if not os.path.exists("xgboost_fraud_model.json"):
+        with zipfile.ZipFile("xgboost_fraud_model.zip", "r") as zip_ref:
+            zip_ref.extractall(".")
+
+    # Load the model
+    model = XGBClassifier()
+    model.load_model("xgboost_fraud_model.json")
+
+    return model
 
 model = load_model()
 
